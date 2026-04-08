@@ -1,0 +1,36 @@
+---
+# Grey Team IPs (Scoring Engine)
+grey_team_ips:
+  - 10.10.10.200
+  - 10.10.10.201
+  - 10.10.10.202
+  - 10.10.10.203
+  - 10.10.10.204
+  - 10.10.10.205
+  - 10.10.10.206
+  - 10.10.10.207
+  - 10.10.10.208
+  - 10.10.10.209
+  - 10.10.10.210
+
+# Service IPs
+service_ips:
+  dc: 10.10.10.21
+  smb: 10.10.10.22
+  smtp: 10.10.10.23
+  apache: 10.10.10.101
+  database: 10.10.10.102
+  openssh: 10.10.10.103
+  openvpn: 10.10.10.104
+
+# Blue Team Infrastructure to BLOCK
+blocked_blue_team_ips:
+  - 10.10.10.21   # DC
+  - 10.10.10.22   # SMB
+  - 10.10.10.23   # SMTP
+  - 10.10.10.103  # OpenSSH
+  - 10.10.10.104  # OpenVPN
+
+# MySQL Password (CHANGE THIS)
+# Generated passwords will be saved to mysql_passwords.txt
+mysql_password_length: 16

@@ -1,0 +1,87 @@
+---
+# Reverse Script
+# Removes all firewall and MySQL hardening
+
+- name: Reverse Deployment Banner
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display reversal banner
+      debug:
+        msg:
+          - "================================================"
+          - "  REVERSING MYSQL HARDENING"
+          - "================================================"
+          - "WARNING: This will:"
+          - "  - Disable UFW firewall"
+          - "  - Restore original MySQL config"
+          - "  - NOT restore old MySQL passwords (manual restore needed)"
+          - "================================================"
+
+- name: Reverse Firewall Rules - Database Server
+  hosts: database
+  gather_facts: no
+  tasks:
+    - name: Disable UFW
+      ufw:
+        state: disabled
+      ignore_errors: yes
+
+    - name: Reset UFW to factory defaults
+      ufw:
+        state: reset
+      ignore_errors: yes
+
+    - name: Display UFW reversal status
+      debug:
+        msg: "UFW firewall disabled on {{ inventory_hostname }}"
+
+- name: Reverse MySQL Configuration - Database Server
+  hosts: database
+  gather_facts: no
+  tasks:
+    - name: Check if MySQL config backup exists
+      stat:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf.backup
+      register: mysql_backup
+
+    - name: Restore original MySQL config
+      copy:
+        src: /etc/mysql/mysql.conf.d/mysqld.cnf.backup
+        dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+        remote_src: yes
+      when: mysql_backup.stat.exists
+      ignore_errors: yes
+
+    - name: Restart MySQL service
+      systemd:
+        name: mysql
+        state: restarted
+      when: mysql_backup.stat.exists
+      ignore_errors: yes
+
+    - name: Display MySQL config reversal status
+      debug:
+        msg: "Original MySQL config restored (if backup existed)"
+
+- name: Reversal Complete
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      debug:
+        msg:
+          - "================================================"
+          - "  REVERSAL COMPLETE"
+          - "================================================"
+          - "✓ UFW firewall disabled"
+          - "✓ MySQL config restored to backup (if existed)"
+          - ""
+          - "MANUAL STEPS REQUIRED:"
+          - "  → MySQL user passwords were NOT restored"
+          - "  → To restore passwords, use the backup SQL file:"
+          - "    ls /root/mysql_user_backup_*.sql"
+          - "  → Or manually reset passwords as needed"
+          - ""
+          - "To re-apply hardening: ansible-playbook deploy-scripts.yml"
+          - "================================================"

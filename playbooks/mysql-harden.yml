@@ -1,0 +1,176 @@
+---
+# MySQL Service Hardening
+# Secure MySQL configuration and users
+
+- name: MySQL Service Hardening - SCP-DATABASE-01
+  hosts: database
+  gather_facts: yes
+  vars:
+    password_file: "/root/mysql_passwords.txt"
+    
+  tasks:
+    - name: Check if MySQL is installed
+      command: which mysql
+      register: mysql_check
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if MySQL is not installed
+      fail:
+        msg: "MySQL is not installed on this system"
+      when: mysql_check.rc != 0
+
+    - name: Install Python MySQL library
+      apt:
+        name: python3-pymysql
+        state: present
+        update_cache: yes
+
+    - name: Backup MySQL user table
+      shell: |
+        mysqldump mysql user > /root/mysql_user_backup_$(date +%Y%m%d_%H%M%S).sql
+      args:
+        executable: /bin/bash
+      ignore_errors: yes
+
+    - name: Get list of all MySQL users
+      shell: |
+        mysql -e "SELECT CONCAT(User,'@',Host) FROM mysql.user WHERE User != '';" -s -N
+      register: mysql_users
+      changed_when: false
+
+    - name: Display discovered MySQL users
+      debug:
+        msg: "Found MySQL users: {{ mysql_users.stdout_lines }}"
+
+    - name: Generate random password for each user
+      set_fact:
+        user_passwords: "{{ user_passwords | default({}) | combine({item: lookup('password', '/dev/null length=' + mysql_password_length|string + ' chars=ascii_letters,digits')}) }}"
+      loop: "{{ mysql_users.stdout_lines }}"
+      no_log: true
+
+    - name: Change passwords for all MySQL users
+      shell: |
+        USER=$(echo "{{ item.key }}" | cut -d@ -f1)
+        HOST=$(echo "{{ item.key }}" | cut -d@ -f2)
+        mysql -e "ALTER USER '$USER'@'$HOST' IDENTIFIED BY '{{ item.value }}';"
+      loop: "{{ user_passwords | dict2items }}"
+      no_log: true
+      when: item.key is defined
+
+    - name: Save passwords to file on database server
+      copy:
+        content: |
+          # MySQL Passwords - Generated {{ ansible_date_time.iso8601 }}
+          # KEEP THIS FILE SECURE!
+          
+          {% for user, password in user_passwords.items() %}
+          {{ user }}: {{ password }}
+          {% endfor %}
+        dest: "{{ password_file }}"
+        mode: '0600'
+        owner: root
+        group: root
+
+    - name: Fetch password file to local machine
+      fetch:
+        src: "{{ password_file }}"
+        dest: "./mysql_passwords_{{ inventory_hostname }}.txt"
+        flat: yes
+
+    - name: Remove anonymous MySQL users
+      shell: |
+        mysql -e "DELETE FROM mysql.user WHERE User='';"
+        mysql -e "FLUSH PRIVILEGES;"
+      ignore_errors: yes
+
+    - name: Remove test database
+      shell: |
+        mysql -e "DROP DATABASE IF EXISTS test;"
+        mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
+        mysql -e "FLUSH PRIVILEGES;"
+      ignore_errors: yes
+
+    - name: Remove remote root access (keep localhost only)
+      shell: |
+        mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
+        mysql -e "FLUSH PRIVILEGES;"
+      ignore_errors: yes
+
+    - name: Revoke dangerous privileges from non-root users
+      shell: |
+        # Get all non-root users
+        mysql -e "SELECT CONCAT(User,'@',Host) FROM mysql.user WHERE User != 'root' AND User != '';" -s -N | while read user_host; do
+          USER=$(echo "$user_host" | cut -d@ -f1)
+          HOST=$(echo "$user_host" | cut -d@ -f2)
+          
+          # Revoke dangerous privileges
+          mysql -e "REVOKE FILE ON *.* FROM '$USER'@'$HOST';" 2>/dev/null || true
+          mysql -e "REVOKE SUPER ON *.* FROM '$USER'@'$HOST';" 2>/dev/null || true
+          mysql -e "REVOKE PROCESS ON *.* FROM '$USER'@'$HOST';" 2>/dev/null || true
+          mysql -e "REVOKE RELOAD ON *.* FROM '$USER'@'$HOST';" 2>/dev/null || true
+          mysql -e "REVOKE SHUTDOWN ON *.* FROM '$USER'@'$HOST';" 2>/dev/null || true
+          mysql -e "REVOKE CREATE USER ON *.* FROM '$USER'@'$HOST';" 2>/dev/null || true
+          mysql -e "REVOKE GRANT OPTION ON *.* FROM '$USER'@'$HOST';" 2>/dev/null || true
+        done
+        mysql -e "FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+      ignore_errors: yes
+
+    - name: Backup original MySQL config
+      copy:
+        src: /etc/mysql/mysql.conf.d/mysqld.cnf
+        dest: /etc/mysql/mysql.conf.d/mysqld.cnf.backup
+        remote_src: yes
+      ignore_errors: yes
+
+    - name: Deploy hardened MySQL configuration
+      copy:
+        src: ../templates/mysqld_hardened.cnf
+        dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+        owner: root
+        group: root
+        mode: '0644'
+        backup: yes
+
+    - name: Restart MySQL service
+      systemd:
+        name: mysql
+        state: restarted
+        enabled: yes
+
+    - name: Wait for MySQL to be ready
+      wait_for:
+        port: 3306
+        host: 10.10.10.102
+        timeout: 30
+
+    - name: Test MySQL connection from localhost
+      shell: |
+        mysql -e "SELECT 1;" > /dev/null && echo "SUCCESS" || echo "FAILED"
+      register: mysql_test
+      changed_when: false
+
+    - name: Display MySQL connection test result
+      debug:
+        msg: "MySQL localhost connection test: {{ mysql_test.stdout }}"
+
+    - name: Display hardening summary
+      debug:
+        msg:
+          - "=== MySQL Hardening Complete ==="
+          - "✓ Passwords changed for all users"
+          - "✓ Password file saved to: {{ password_file }}"
+          - "✓ Password file downloaded to: ./mysql_passwords_{{ inventory_hostname }}.txt"
+          - "✓ Anonymous users removed"
+          - "✓ Test database removed"
+          - "✓ Remote root access removed"
+          - "✓ Dangerous privileges revoked from non-root users"
+          - "✓ MySQL config hardened (bind-address, local_infile disabled)"
+          - "✓ MySQL service restarted"
+          - ""
+          - "NEXT STEPS:"
+          - "1. Check ./mysql_passwords_{{ inventory_hostname }}.txt for new passwords"
+          - "2. Update your application configuration with new passwords"
+          - "3. Test Apache -> MySQL connectivity"

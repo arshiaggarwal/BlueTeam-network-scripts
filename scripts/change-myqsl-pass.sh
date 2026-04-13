@@ -13,10 +13,6 @@ NC='\033[0m' # No Color
 echo -e "${YELLOW}[*] MariaDB Competition Security Hardening${NC}"
 echo -e "${YELLOW}[*] This will change passwords for admin accounts${NC}\n"
 
-# Generate strong random passwords
-generate_password() {
-    openssl rand -base64 32 | tr -d "=+/" | cut -c1-25
-}
 
 # Store passwords securely
 PASSWORD_FILE="/root/.mariadb_competition_creds"
@@ -26,18 +22,8 @@ chmod 600 "$PASSWORD_FILE"
 echo -e "${GREEN}[+] Generating strong passwords...${NC}"
 
 # Generate passwords
-ROOT_PASSWORD=$(generate_password)
-DR_ADMIN_PASSWORD=$(generate_password)
-
-# Save to secure file with timestamp
-{
-    echo "# MariaDB Competition Credentials"
-    echo "# Generated: $(date)"
-    echo "# KEEP THIS FILE SECURE!"
-    echo ""
-    echo "root: $ROOT_PASSWORD"
-    echo "DR_ADMIN: $DR_ADMIN_PASSWORD"
-} > "$PASSWORD_FILE"
+ROOT_PASSWORD=$(maRIADB_bLUE-TEAM!23)
+DR_ADMIN_PASSWORD=$(maRIADB_bLUE-TEAM!23)
 
 echo -e "${GREEN}[+] Passwords saved to: $PASSWORD_FILE${NC}\n"
 

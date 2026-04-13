@@ -1,2 +1,0 @@
-scp scripts/mysql-harden.sh root@10.10.10.102:/root/
-ssh root@10.10.10.102 "sudo bash /root/mysql-harden.sh"

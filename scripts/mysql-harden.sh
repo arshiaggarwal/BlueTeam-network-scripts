@@ -8,35 +8,29 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-echo -e "${GREEN}================================================${NC}"
-echo -e "${GREEN}  MYSQL HARDENING SCRIPT${NC}"
-echo -e "${GREEN}  Standalone Deployment${NC}"
-echo -e "${GREEN}================================================${NC}"
+echo "================================================"
+echo "  MYSQL HARDENING SCRIPT"
+echo "  Standalone Deployment"
+echo "================================================"
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then 
-    echo -e "${RED}ERROR: Please run as root (sudo bash mysql-harden.sh)${NC}"
+    echo "ERROR: Please run as root (sudo bash mysql-harden.sh)"
     exit 1
 fi
 
 # Check if MySQL is installed
 if ! command -v mysql &> /dev/null; then
-    echo -e "${RED}ERROR: MySQL is not installed${NC}"
+    echo "ERROR: MySQL is not installed"
     exit 1
 fi
 
-echo -e "${YELLOW}[1/9] Installing UFW...${NC}"
+echo "[1/9] Installing UFW..."
 apt-get update -qq
 apt-get install -y ufw > /dev/null 2>&1
-echo -e "${GREEN}✓ UFW installed${NC}"
+echo "✓ UFW installed"
 
-echo -e "${YELLOW}[2/9] Configuring firewall rules...${NC}"
+echo "[2/9] Configuring firewall rules..."
 
 # Reset UFW
 ufw --force reset > /dev/null 2>&1
@@ -44,9 +38,6 @@ ufw --force reset > /dev/null 2>&1
 # Default policies
 ufw default deny incoming > /dev/null 2>&1
 ufw default allow outgoing > /dev/null 2>&1
-
-# Allow SSH
-ufw allow 22/tcp comment 'SSH Access' > /dev/null 2>&1
 
 # Allow MySQL from Apache
 ufw allow from 10.10.10.101 to any port 3306 proto tcp comment 'MySQL from Apache' > /dev/null 2>&1
@@ -72,21 +63,37 @@ ufw allow out on lo > /dev/null 2>&1
 # Enable UFW
 ufw --force enable > /dev/null 2>&1
 
-echo -e "${GREEN}✓ Firewall configured${NC}"
+echo "✓ Firewall configured"
 
-echo -e "${YELLOW}[3/9] Backing up MySQL user table...${NC}"
+echo "[3/9] Backing up MySQL user table..."
 BACKUP_FILE="/root/mysql_user_backup_$(date +%Y%m%d_%H%M%S).sql"
 mysqldump mysql user > "$BACKUP_FILE" 2>/dev/null || true
-echo -e "${GREEN}✓ Backup saved to: $BACKUP_FILE${NC}"
+echo "✓ Backup saved to: $BACKUP_FILE"
 
-echo -e "${YELLOW}[4/9] Discovering MySQL users...${NC}"
-mapfile -t MYSQL_USERS < <(mysql -e "SELECT CONCAT(User,'@',Host) FROM mysql.user WHERE User != '';" -s -N 2>/dev/null)
-echo -e "${GREEN}✓ Found ${#MYSQL_USERS[@]} MySQL users${NC}"
+echo "[4/9] Discovering MySQL users (excluding system accounts)..."
+# FIXED: Exclude system accounts that must not be changed
+mapfile -t MYSQL_USERS < <(mysql -e "
+    SELECT CONCAT(User,'@',Host) 
+    FROM mysql.user 
+    WHERE User != '' 
+    AND User NOT IN ('mysql.sys', 'mysql.session', 'mysql.infoschema', 'debian-sys-maint')
+    AND User NOT LIKE 'mysql.%';" -s -N 2>/dev/null)
 
-echo -e "${YELLOW}[5/9] Changing passwords for all MySQL users...${NC}"
+echo "✓ Found ${#MYSQL_USERS[@]} MySQL users (system accounts excluded)"
+
+# Display which users will be changed
+echo ""
+echo "Users that will have passwords changed:"
+for user in "${MYSQL_USERS[@]}"; do
+    echo "  - $user"
+done
+echo ""
+
+echo "[5/9] Changing passwords for non-system MySQL users..."
 PASSWORD_FILE="/root/mysql_passwords_$(date +%Y%m%d_%H%M%S).txt"
 echo "# MySQL Passwords - Generated $(date)" > "$PASSWORD_FILE"
 echo "# KEEP THIS FILE SECURE!" >> "$PASSWORD_FILE"
+echo "# System accounts (mysql.sys, debian-sys-maint) were NOT changed" >> "$PASSWORD_FILE"
 echo "" >> "$PASSWORD_FILE"
 
 for user_host in "${MYSQL_USERS[@]}"; do
@@ -94,32 +101,42 @@ for user_host in "${MYSQL_USERS[@]}"; do
     HOST=$(echo "$user_host" | cut -d@ -f2)
     
     # Generate random password
-    NEW_PASSWORD=$(openssl rand -base64 12 | tr -d "=+/" | cut -c1-16)
+    NEW_PASSWORD=$(openssl rand -base64 18 | tr -d "=+/" | cut -c1-20)
     
     # Change password
-    mysql -e "ALTER USER '$USER'@'$HOST' IDENTIFIED BY '$NEW_PASSWORD';" 2>/dev/null || true
-    
-    # Save to file
-    echo "$user_host: $NEW_PASSWORD" >> "$PASSWORD_FILE"
+    if mysql -e "ALTER USER '$USER'@'$HOST' IDENTIFIED BY '$NEW_PASSWORD';" 2>/dev/null; then
+        echo "$user_host: $NEW_PASSWORD" >> "$PASSWORD_FILE"
+        echo "  ✓ Changed: $user_host"
+    else
+        echo "  ✗ Failed: $user_host" | tee -a "$PASSWORD_FILE"
+    fi
 done
 
 chmod 600 "$PASSWORD_FILE"
-echo -e "${GREEN}✓ Passwords changed and saved to: $PASSWORD_FILE${NC}"
+echo "✓ Passwords changed and saved to: $PASSWORD_FILE"
 
-echo -e "${YELLOW}[6/9] Removing anonymous users and test database...${NC}"
+echo "[6/9] Removing anonymous users and test database..."
 mysql -e "DELETE FROM mysql.user WHERE User='';" 2>/dev/null || true
 mysql -e "DROP DATABASE IF EXISTS test;" 2>/dev/null || true
 mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" 2>/dev/null || true
 mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
-echo -e "${GREEN}✓ Anonymous users and test database removed${NC}"
+echo "✓ Anonymous users and test database removed"
 
-echo -e "${YELLOW}[7/9] Removing remote root access...${NC}"
+echo "[7/9] Removing remote root access..."
 mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');" 2>/dev/null || true
 mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
-echo -e "${GREEN}✓ Remote root access removed${NC}"
+echo "✓ Remote root access removed"
 
-echo -e "${YELLOW}[8/9] Revoking dangerous privileges from non-root users...${NC}"
-mysql -e "SELECT CONCAT(User,'@',Host) FROM mysql.user WHERE User != 'root' AND User != '';" -s -N 2>/dev/null | while read user_host; do
+echo "[8/9] Revoking dangerous privileges from non-root users..."
+# FIXED: Also exclude system accounts here
+mysql -e "
+    SELECT CONCAT(User,'@',Host) 
+    FROM mysql.user 
+    WHERE User != 'root' 
+    AND User != '' 
+    AND User NOT IN ('mysql.sys', 'mysql.session', 'mysql.infoschema', 'debian-sys-maint')
+    AND User NOT LIKE 'mysql.%';" -s -N 2>/dev/null | while read user_host; do
+    
     USER=$(echo "$user_host" | cut -d@ -f1)
     HOST=$(echo "$user_host" | cut -d@ -f2)
     
@@ -132,9 +149,9 @@ mysql -e "SELECT CONCAT(User,'@',Host) FROM mysql.user WHERE User != 'root' AND 
     mysql -e "REVOKE GRANT OPTION ON *.* FROM '$USER'@'$HOST';" 2>/dev/null || true
 done
 mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
-echo -e "${GREEN}✓ Dangerous privileges revoked${NC}"
+echo "✓ Dangerous privileges revoked"
 
-echo -e "${YELLOW}[9/9] Applying hardened MySQL configuration...${NC}"
+echo "[9/9] Applying hardened MySQL configuration..."
 cp /etc/mysql/mysql.conf.d/mysqld.cnf /etc/mysql/mysql.conf.d/mysqld.cnf.backup 2>/dev/null || true
 
 cat > /etc/mysql/mysql.conf.d/mysqld.cnf << 'EOF'
@@ -174,37 +191,47 @@ port = 3306
 EOF
 
 systemctl restart mysql
-sleep 3
+sleep 5
 
 # Test MySQL connection
 if mysql -e "SELECT 1;" > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ MySQL configuration applied and service restarted${NC}"
+    echo "✓ MySQL configuration applied and service restarted"
 else
-    echo -e "${RED}⚠ MySQL service may have issues - check logs${NC}"
+    echo "⚠ WARNING: MySQL service may have issues - check logs"
+    echo "⚠ To restore: cp /etc/mysql/mysql.conf.d/mysqld.cnf.backup /etc/mysql/mysql.conf.d/mysqld.cnf"
 fi
 
 echo ""
-echo -e "${GREEN}================================================${NC}"
-echo -e "${GREEN}  HARDENING COMPLETE${NC}"
-echo -e "${GREEN}================================================${NC}"
+echo "================================================"
+echo "  HARDENING COMPLETE"
+echo "================================================"
 echo ""
-echo -e "${GREEN}✓ Firewall hardened (UFW)${NC}"
-echo -e "  - MySQL (3306): Apache + Grey Team only"
-echo -e "  - SSH (22): Existing access maintained"
-echo -e "  - ICMP: Grey Team only"
-echo -e "  - Blocked: DC, SMB, SMTP, OpenSSH, OpenVPN"
+echo "✓ Firewall hardened (UFW)"
+echo "  - MySQL (3306): Apache + Grey Team only"
+echo "  - SSH (22): Existing access maintained"
+echo "  - ICMP: Grey Team only"
+echo "  - Blocked: Other blue team IPs from MySQL"
 echo ""
-echo -e "${GREEN}✓ MySQL service hardened${NC}"
-echo -e "  - All user passwords changed"
-echo -e "  - Anonymous users removed"
-echo -e "  - Test database removed"
-echo -e "  - Remote root disabled"
-echo -e "  - Dangerous privileges revoked"
+echo "✓ MySQL service hardened"
+echo "  - User passwords changed (system accounts preserved)"
+echo "  - Anonymous users removed"
+echo "  - Test database removed"
+echo "  - Remote root disabled"
+echo "  - Dangerous privileges revoked"
 echo ""
-echo -e "${YELLOW}IMPORTANT:${NC}"
-echo -e "  → New passwords: ${YELLOW}$PASSWORD_FILE${NC}"
-echo -e "  → User backup: ${YELLOW}$BACKUP_FILE${NC}"
-echo -e "  → Update Apache config with new DB password!"
-echo -e "  → Test Apache -> MySQL connection"
+echo "CRITICAL NEXT STEPS:"
+echo "  1. New passwords saved in: $PASSWORD_FILE"
+echo "  2. User table backup: $BACKUP_FILE"
+echo "  3. UPDATE YOUR APPLICATION CONFIG FILES with new DB passwords!"
+echo "  4. Test Apache -> MySQL connection IMMEDIATELY"
+echo "  5. Keep a copy of the password file in your team's secure location"
 echo ""
-echo -e "${GREEN}================================================${NC}"
+echo "To view passwords: cat $PASSWORD_FILE"
+echo "To test connection: mysql -u <username> -p"
+echo ""
+echo "================================================"
+
+# Final verification
+echo ""
+echo "Current MySQL users (for verification):"
+mysql -e "SELECT User, Host, plugin FROM mysql.user ORDER BY User;" 2>/dev/null || true

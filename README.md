@@ -39,58 +39,6 @@ Automated MySQL hardening for CCDC-style competitions. Deploys restrictive firew
 - OpenSSH: 10.10.10.103
 - OpenVPN: 10.10.10.104
 
-## 🚀 Deployment Options
-
-### Option 1: Ansible (Recommended)
-
-```bash
-# 1. Update credentials in inventory.ini
-nano inventory.ini
-
-# 2. Deploy all hardening
-ansible-playbook deploy-scripts.yml
-
-# 3. Passwords will be saved to: mysql_passwords_SCP-DATABASE-01.txt
-```
-
-**Runtime**: ~3-5 minutes
-
-### Option 2: Standalone Bash Script (No Ansible)
-
-```bash
-# 1. Copy script to database server
-scp scripts/mysql-harden.sh root@10.10.10.102:/root/
-
-# 2. SSH to database server
-ssh root@10.10.10.102
-
-# 3. Run the script
-sudo bash /root/mysql-harden.sh
-```
-
-**Runtime**: ~2-3 minutes
-
-## 📁 File Structure
-
-```
-blue-team-firewall-hardening/
-├── README.md                          # This file
-├── ansible.cfg                        # Ansible configuration
-├── inventory.ini                      # Host inventory
-├── group_vars/
-│   └── all.yml                        # Variables (IPs, settings)
-├── playbooks/
-│   ├── greyteam-validate.yml          # Ensure grey team access
-│   ├── port-harden.yml                # Firewall rules
-│   └── mysql-harden.yml               # MySQL security
-├── templates/
-│   └── mysqld_hardened.cnf            # Hardened MySQL config
-├── scripts/
-│   └── mysql-harden.sh                # Standalone bash script
-├── deploy-scripts.yml                 # Master deployment
-└── reverse.yml                        # Rollback script
-```
-
 ## 🔧 Configuration
 
 ### Update IP Addresses
@@ -111,15 +59,6 @@ service_ips:
 
 # MySQL password length
 mysql_password_length: 16   # Change if desired
-```
-
-### Update Credentials
-
-Edit `inventory.ini`:
-
-```ini
-[debian_servers:vars]
-ansible_user=root           # Change username if needed
 ```
 
 ## 📊 What Gets Changed
@@ -143,9 +82,6 @@ For all non-root users:
 - `/etc/mysql/mysql.conf.d/mysqld.cnf` - Hardened configuration
   - Backup saved to: `/etc/mysql/mysql.conf.d/mysqld.cnf.backup`
 - `/etc/ufw/` - Firewall rules
-
-### Backups Created
-- `/root/mysql_user_backup_YYYYMMDD_HHMMSS.sql` - MySQL user table backup
 
 ## ⚠️ Important Notes
 
@@ -179,17 +115,6 @@ This hardening **WILL NOT BREAK**:
 - Legitimate application database queries
 
 ## 🔄 Rollback
-
-### Using Ansible
-
-```bash
-ansible-playbook reverse.yml
-```
-
-This will:
-- Disable UFW firewall
-- Restore original MySQL configuration
-- **NOTE**: Passwords are NOT automatically restored
 
 ### Manual Rollback
 
@@ -227,13 +152,6 @@ mysql < /root/mysql_user_backup_YYYYMMDD_HHMMSS.sql
 ufw status numbered | grep 3306
 
 # Should show rules allowing 10.10.10.200-210
-```
-
-**Fix**:
-```bash
-# Re-run grey team validation
-ansible-playbook playbooks/greyteam-validate.yml
-```
 
 ### MySQL Won't Start
 
@@ -269,21 +187,6 @@ systemctl restart mysql
 
 ## 📈 Verification Commands
 
-### Check Firewall Status
-```bash
-ansible database -m shell -a "ufw status numbered"
-```
-
-### Check MySQL Users
-```bash
-ansible database -m shell -a "mysql -e 'SELECT User, Host FROM mysql.user;'"
-```
-
-### Check MySQL Config
-```bash
-ansible database -m shell -a "grep -E 'bind-address|local_infile' /etc/mysql/mysql.conf.d/mysqld.cnf"
-```
-
 ### Test MySQL Connection
 ```bash
 # From Apache server
@@ -292,13 +195,7 @@ mysql -h 10.10.10.102 -u <username> -p<password> -e "SELECT 1;"
 
 ## 🎯 Competition Workflow
 
-```bash
-# 1. At competition start
-cd blue-team-firewall-hardening
-nano inventory.ini  # Update credentials
-
-# 2. Deploy hardening
-ansible-playbook deploy-scripts.yml
+```
 
 # 3. Check password file
 cat mysql_passwords_SCP-DATABASE-01.txt
